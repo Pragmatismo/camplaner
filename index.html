@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cam Profile Designer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #eceff1;
+      color: #37474f;
+      height: 100vh;
+      overflow: hidden;
+      font-size: 13px;
+    }
+
+    #root { display: flex; height: 100vh; }
+
+    /* ── LEFT PANEL ─────────────────────────────────────────── */
+    #controls {
+      width: 310px;
+      flex-shrink: 0;
+      background: #ffffff;
+      border-right: 1px solid #cfd8dc;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .app-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1565c0;
+      border-bottom: 2px solid #1565c0;
+      padding-bottom: 10px;
+      line-height: 1.3;
+    }
+
+    .section { display: flex; flex-direction: column; gap: 10px; }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #90a4ae;
+    }
+
+    .field-row { display: flex; align-items: center; gap: 8px; }
+    .field-row label { min-width: 85px; color: #546e7a; }
+
+    input[type="number"], input[type="text"] {
+      padding: 5px 8px;
+      border: 1px solid #b0bec5;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #37474f;
+      background: #fafafa;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="number"]:focus, input[type="text"]:focus {
+      border-color: #1565c0;
+      background: #fff;
+    }
+    input[type="number"] { width: 72px; }
+
+    .unit-label { color: #90a4ae; font-size: 12px; }
+
+    .info-box {
+      background: #e3f2fd;
+      border: 1px solid #bbdefb;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #1565c0;
+    }
+
+    /* ── NODE LIST ──────────────────────────────────────────── */
+    #node-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .node-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .node-card-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      background: #f5f5f5;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .node-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      background: #1565c0;
+      border-radius: 10px;
+      min-width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      flex-shrink: 0;
+    }
+
+    .node-name-input {
+      flex: 1;
+      padding: 3px 6px;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 600;
+      background: transparent;
+    }
+    .node-name-input:focus { border-color: #1565c0; background: #fff; }
+
+    .node-remove-btn {
+      padding: 2px 7px;
+      background: none;
+      border: 1px solid #ef5350;
+      color: #ef5350;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1.4;
+      transition: all 0.15s;
+    }
+    .node-remove-btn:hover:not(:disabled) { background: #ef5350; color: #fff; }
+    .node-remove-btn:disabled { opacity: 0.25; cursor: default; }
+
+    .node-card-body {
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .node-field { display: flex; flex-direction: column; gap: 3px; }
+
+    .node-field-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #90a4ae;
+    }
+
+    .input-unit-row { display: flex; align-items: center; gap: 4px; }
+
+    .node-field input[type="number"] { width: 60px; padding: 4px 6px; }
+
+    .node-lock-btn {
+      padding: 5px 7px;
+      background: #fafafa;
+      border: 1px solid #b0bec5;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      transition: all 0.15s;
+      margin-top: auto;
+    }
+    .node-lock-btn.locked { background: #fff8e1; border-color: #ffb300; }
+
+    .node-controls { display: flex; gap: 8px; }
+
+    .btn {
+      padding: 7px 14px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+
+    .btn-primary { background: #1565c0; color: #fff; flex: 1; }
+    .btn-primary:hover { background: #0d47a1; }
+
+    .duration-total {
+      font-size: 11px;
+      color: #546e7a;
+      text-align: right;
+      padding-right: 2px;
+    }
+    .duration-total.ok  { color: #2e7d32; }
+    .duration-total.warn { color: #d32f2f; font-weight: 600; }
+
+    .export-btns { display: flex; flex-direction: column; gap: 8px; }
+
+    .btn-export {
+      width: 100%;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .btn-export-outline  { background: #37474f; color: #fff; }
+    .btn-export-outline:hover  { background: #263238; }
+    .btn-export-labeled  { background: #2e7d32; color: #fff; }
+    .btn-export-labeled:hover  { background: #1b5e20; }
+
+    /* ── CANVAS AREA ────────────────────────────────────────── */
+    #canvas-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    #canvas-wrapper {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+
+    #cam-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+    }
+
+    .canvas-info {
+      font-size: 11px;
+      color: #90a4ae;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<div id="root">
+
+  <!-- ── LEFT PANEL ─────────────────────────────────────── -->
+  <aside id="controls">
+    <h1 class="app-title">Cam Profile<br>Designer</h1>
+
+    <!-- Dimensions -->
+    <div class="section">
+      <div class="section-title">Dimensions</div>
+
+      <div class="field-row">
+        <label>Base Circle</label>
+        <input type="number" id="input-base" min="1" max="500" step="1" value="50">
+        <span class="unit-label">mm</span>
+      </div>
+
+      <div class="field-row">
+        <label>Travel</label>
+        <input type="number" id="input-travel" min="0" max="500" step="1" value="60">
+        <span class="unit-label">mm</span>
+      </div>
+
+      <div class="info-box">
+        Max radius: <strong id="max-radius-val">110</strong> mm
+        &nbsp;·&nbsp; ⌀ <strong id="max-dia-val">220</strong> mm
+      </div>
+    </div>
+
+    <!-- Nodes -->
+    <div class="section">
+      <div class="section-title">Cam Nodes</div>
+      <div id="node-list"></div>
+      <div class="duration-total" id="duration-total">Total: 100.00%</div>
+      <div class="node-controls">
+        <button class="btn btn-primary" id="btn-add-node">+ Add Node</button>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="section">
+      <div class="section-title">Export — True to Size SVG</div>
+      <div class="export-btns">
+        <button class="btn-export btn-export-outline" id="btn-save-outline">
+          Save Outline
+        </button>
+        <button class="btn-export btn-export-labeled" id="btn-save-labeled">
+          Save Labelled
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── CANVAS ─────────────────────────────────────────── -->
+  <main id="canvas-area">
+    <div id="canvas-wrapper">
+      <canvas id="cam-canvas"></canvas>
+    </div>
+    <div class="canvas-info" id="canvas-info">
+      Base: 50 mm · Travel: 60 mm · Max Radius: 110 mm
+    </div>
+  </main>
+
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+const state = {
+  baseCircle: 50,
+  travel:     60,
+  nodes: [
+    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false },
+    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false }
+  ],
+  nextId: 3
+};
+
+// ════════════════════════════════════════════════════════
+//  GEOMETRY HELPERS
+// ════════════════════════════════════════════════════════
+const maxRadius = () => state.baseCircle + state.travel;
+
+/** Cumulative start angles (radians) for each node. */
+function nodeAngles() {
+  const out = [];
+  let cum = 0;
+  for (const n of state.nodes) {
+    out.push(cum * Math.PI * 2 / 100);
+    cum += n.duration;
+  }
+  return out;
+}
+
+/**
+ * Cam radius at polar angle theta (radians), interpolated with a
+ * Hermite / Catmull-Rom spline so the curve is C1-smooth everywhere.
+ */
+function radiusAtAngle(theta) {
+  const nodes  = state.nodes;
+  const n      = nodes.length;
+  if (n === 0) return state.baseCircle;
+  if (n === 1) return state.baseCircle + nodes[0].mm;
+
+  const TWO_PI = Math.PI * 2;
+
+  // Angular span of each segment (radians)
+  const spans  = nodes.map(nd => nd.duration / 100 * TWO_PI);
+  const angles = nodeAngles();
+  const radii  = nodes.map(nd => state.baseCircle + nd.mm);
+
+  // Catmull-Rom–style slopes at each node (periodic)
+  const slopes = radii.map((_, i) => {
+    const prev   = (i - 1 + n) % n;
+    const next   = (i + 1) % n;
+    const hPrev  = spans[prev];
+    const hNext  = spans[i];
+    const total  = hPrev + hNext;
+    return total < 1e-10 ? 0 : (radii[next] - radii[prev]) / total;
+  });
+
+  // Normalise theta → [0, 2π)
+  theta = ((theta % TWO_PI) + TWO_PI) % TWO_PI;
+
+  // Find which segment theta falls in
+  let seg = n - 1;   // default: last segment (wraps to 0)
+  for (let i = 0; i < n - 1; i++) {
+    if (theta >= angles[i] && theta < angles[i + 1]) { seg = i; break; }
+  }
+
+  const next = (seg + 1) % n;
+  const h    = spans[seg];
+  if (h < 1e-10) return radii[seg];
+
+  const t  = (theta - angles[seg]) / h;
+  const t2 = t * t, t3 = t2 * t;
+
+  // Hermite basis
+  const h00 =  2*t3 - 3*t2 + 1;
+  const h10 =    t3 - 2*t2 + t;
+  const h01 = -2*t3 + 3*t2;
+  const h11 =    t3 -   t2;
+
+  const r = h00 * radii[seg]  + h10 * slopes[seg]  * h
+          + h01 * radii[next] + h11 * slopes[next] * h;
+  return Math.max(0, r);
+}
+
+// Convert polar angle + radius to canvas (x,y)
+// Convention: theta=0 → top (12-o'clock), clockwise
+function polarToXY(cx, cy, theta, r, scale) {
+  return {
+    x: cx + Math.sin(theta) * r * scale,
+    y: cy - Math.cos(theta) * r * scale
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  CANVAS DRAWING
+// ════════════════════════════════════════════════════════
+function draw() {
+  const canvas  = document.getElementById('cam-canvas');
+  const wrapper = document.getElementById('canvas-wrapper');
+  const rect    = wrapper.getBoundingClientRect();
+
+  canvas.width  = Math.floor(rect.width);
+  canvas.height = Math.floor(rect.height);
+
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const maxR   = maxRadius();
+  const padPx  = 52;
+  const scale  = (Math.min(W, H) / 2 - padPx) / maxR;
+  const cx     = W / 2, cy = H / 2;
+  const TWO_PI = Math.PI * 2;
+
+  // Background
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Reference circles (dashed) ──────────────────────
+  ctx.save();
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = '#c5d3d9';
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, state.baseCircle * scale, 0, TWO_PI);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, maxR * scale, 0, TWO_PI);
+  ctx.stroke();
+  ctx.restore();
+
+  // Circle dimension labels
+  ctx.save();
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = '#b0bec5';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const bLabelX = cx + state.baseCircle * scale + 4;
+  const mLabelX = cx + maxR * scale + 4;
+  // Only draw if there's room
+  if (bLabelX + 52 < W - 4)
+    ctx.fillText(`ø${state.baseCircle * 2} mm`, bLabelX, cy);
+  if (mLabelX + 52 < W - 4)
+    ctx.fillText(`ø${maxR * 2} mm`, mLabelX, cy);
+  ctx.restore();
+
+  // ── Start line ───────────────────────────────────────
+  ctx.save();
+  ctx.strokeStyle = '#ef5350';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + state.baseCircle * scale * 0.25);
+  ctx.lineTo(cx, cy - maxR * scale - 16);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = '#ef5350';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('START', cx, cy - maxR * scale - 18);
+  ctx.restore();
+
+  // ── Cam profile (sampled polar curve) ────────────────
+  const SAMPLES = 720;
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i <= SAMPLES; i++) {
+    const theta = (i / SAMPLES) * TWO_PI;
+    const r = radiusAtAngle(theta);
+    const { x, y } = polarToXY(cx, cy, theta, r, scale);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle   = 'rgba(21,101,192,0.07)';
+  ctx.fill();
+  ctx.strokeStyle = '#1565c0';
+  ctx.lineWidth   = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  // ── Node markers ─────────────────────────────────────
+  const angles = nodeAngles();
+  state.nodes.forEach((node, i) => {
+    const theta = angles[i];
+    const r     = state.baseCircle + node.mm;
+    const { x, y } = polarToXY(cx, cy, theta, r, scale);
+
+    // Dot
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, TWO_PI);
+    ctx.fillStyle   = '#1565c0';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Label – nudge outward from centre
+    const nx = Math.sin(theta), ny = -Math.cos(theta); // unit outward vector
+    const OFFSET = 14;
+    const lx = x + nx * OFFSET;
+    const ly = y + ny * OFFSET;
+
+    ctx.save();
+    ctx.font         = '11px sans-serif';
+    ctx.fillStyle    = '#37474f';
+    ctx.textAlign    = nx >  0.15 ? 'left'
+                     : nx < -0.15 ? 'right' : 'center';
+    ctx.textBaseline = ny >  0.15 ? 'top'
+                     : ny < -0.15 ? 'bottom' : 'middle';
+    ctx.fillText(node.name, lx, ly);
+    ctx.restore();
+  });
+
+  // ── Centre mark ──────────────────────────────────────
+  ctx.save();
+  const CH = 7;
+  ctx.strokeStyle = '#78909c';
+  ctx.lineWidth   = 0.75;
+  ctx.beginPath();
+  ctx.moveTo(cx - CH, cy); ctx.lineTo(cx + CH, cy);
+  ctx.moveTo(cx, cy - CH); ctx.lineTo(cx, cy + CH);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2, 0, TWO_PI);
+  ctx.fillStyle = '#78909c';
+  ctx.fill();
+  ctx.restore();
+
+  // ── Scale bar ────────────────────────────────────────
+  const scaleBarMM = pickScaleBar(maxR);
+  const scaleBarPx = scaleBarMM * scale;
+  const SX = 18, SY = H - 18;
+  ctx.save();
+  ctx.strokeStyle = '#78909c';
+  ctx.lineWidth   = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(SX, SY); ctx.lineTo(SX + scaleBarPx, SY);
+  ctx.moveTo(SX, SY - 4); ctx.lineTo(SX, SY + 4);
+  ctx.moveTo(SX + scaleBarPx, SY - 4); ctx.lineTo(SX + scaleBarPx, SY + 4);
+  ctx.stroke();
+  ctx.font         = '10px sans-serif';
+  ctx.fillStyle    = '#78909c';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(`${scaleBarMM} mm`, SX + scaleBarPx / 2, SY - 6);
+  ctx.restore();
+}
+
+function pickScaleBar(maxR) {
+  // Pick a round-number bar that's roughly 20% of the cam radius
+  const target = maxR * 0.2;
+  const nice   = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500];
+  return nice.reduce((prev, cur) =>
+    Math.abs(cur - target) < Math.abs(prev - target) ? cur : prev
+  );
+}
+
+// ════════════════════════════════════════════════════════
+//  DURATION REDISTRIBUTION
+// ════════════════════════════════════════════════════════
+/**
+ * After a node at `changedIndex` has its duration updated,
+ * redistribute the remaining percentage evenly among all
+ * unlocked nodes that are NOT the changed one.
+ */
+function redistributeDurations(changedIndex) {
+  const nodes = state.nodes;
+  const n     = nodes.length;
+
+  let fixedSum   = 0;
+  const freeIdx  = [];
+
+  for (let i = 0; i < n; i++) {
+    if (i === changedIndex || nodes[i].locked) {
+      fixedSum += Math.max(0, nodes[i].duration);
+    } else {
+      freeIdx.push(i);
+    }
+  }
+
+  const remaining = Math.max(0, 100 - fixedSum);
+  if (freeIdx.length === 0) return;
+  const share = remaining / freeIdx.length;
+  freeIdx.forEach(i => { nodes[i].duration = share; });
+}
+
+// ════════════════════════════════════════════════════════
+//  ADD / REMOVE NODES
+// ════════════════════════════════════════════════════════
+function addNode() {
+  const idx = state.nodes.length;
+  state.nodes.push({
+    id:       state.nextId++,
+    name:     `Node ${idx + 1}`,
+    mm:       0,
+    duration: 0,
+    locked:   false
+  });
+  redistributeDurations(idx);
+  renderAll();
+}
+
+function removeNode(index) {
+  if (state.nodes.length <= 2) return;
+  state.nodes.splice(index, 1);
+  // Re-spread unlocked durations
+  const lockedSum = state.nodes.filter(n => n.locked)
+                               .reduce((s, n) => s + n.duration, 0);
+  const unlocked  = state.nodes.filter(n => !n.locked);
+  const remaining = Math.max(0, 100 - lockedSum);
+  if (unlocked.length > 0) {
+    const share = remaining / unlocked.length;
+    unlocked.forEach(n => { n.duration = share; });
+  }
+  renderAll();
+}
+
+// ════════════════════════════════════════════════════════
+//  RENDER CONTROLS (left panel)
+// ════════════════════════════════════════════════════════
+function renderAll() {
+  const maxR = maxRadius();
+
+  // Header stats
+  document.getElementById('max-radius-val').textContent = maxR;
+  document.getElementById('max-dia-val').textContent    = maxR * 2;
+  document.getElementById('canvas-info').textContent    =
+    `Base: ${state.baseCircle} mm · Travel: ${state.travel} mm · Max Radius: ${maxR} mm`;
+
+  // Duration total
+  const total   = state.nodes.reduce((s, n) => s + n.duration, 0);
+  const totEl   = document.getElementById('duration-total');
+  totEl.textContent = `Total: ${total.toFixed(2)}%`;
+  totEl.className   = 'duration-total ' + (Math.abs(total - 100) < 0.05 ? 'ok' : 'warn');
+
+  // Node cards
+  const list = document.getElementById('node-list');
+  list.innerHTML = '';
+
+  state.nodes.forEach((node, i) => {
+    const card = document.createElement('div');
+    card.className = 'node-card';
+    card.innerHTML = `
+      <div class="node-card-header">
+        <span class="node-badge">${i + 1}</span>
+        <input type="text" class="node-name-input"
+               value="${esc(node.name)}" data-idx="${i}"
+               placeholder="Node name">
+        <button class="node-remove-btn" data-idx="${i}"
+                ${state.nodes.length <= 2 ? 'disabled' : ''}
+                title="Remove node">×</button>
+      </div>
+      <div class="node-card-body">
+        <div class="node-field">
+          <div class="node-field-label">Extension</div>
+          <div class="input-unit-row">
+            <input type="number" class="node-mm-input"
+                   value="${node.mm}" min="0" max="${state.travel}"
+                   step="0.1" data-idx="${i}">
+            <span class="unit-label">mm</span>
+          </div>
+        </div>
+        <div class="node-field">
+          <div class="node-field-label">Duration</div>
+          <div class="input-unit-row">
+            <input type="number" class="node-dur-input"
+                   value="${node.duration.toFixed(2)}"
+                   min="0" max="100" step="0.1" data-idx="${i}">
+            <span class="unit-label">%</span>
+          </div>
+        </div>
+        <div class="node-field">
+          <div class="node-field-label">Lock</div>
+          <button class="node-lock-btn ${node.locked ? 'locked' : ''}"
+                  data-idx="${i}"
+                  title="${node.locked ? 'Unlock duration (will auto-redistribute)' : 'Lock duration'}">
+            ${node.locked ? '🔒' : '🔓'}
+          </button>
+        </div>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  // Wire events
+  list.querySelectorAll('.node-name-input').forEach(el => {
+    el.addEventListener('input', e => {
+      state.nodes[+e.target.dataset.idx].name = e.target.value;
+      draw();
+    });
+  });
+
+  list.querySelectorAll('.node-mm-input').forEach(el => {
+    el.addEventListener('input', e => {
+      const i   = +e.target.dataset.idx;
+      const val = clamp(parseFloat(e.target.value) || 0, 0, state.travel);
+      state.nodes[i].mm = val;
+      draw();
+    });
+    el.addEventListener('change', e => {
+      const i   = +e.target.dataset.idx;
+      const val = clamp(parseFloat(e.target.value) || 0, 0, state.travel);
+      state.nodes[i].mm = val;
+      e.target.value    = val;
+      draw();
+    });
+  });
+
+  list.querySelectorAll('.node-dur-input').forEach(el => {
+    el.addEventListener('change', e => {
+      const i   = +e.target.dataset.idx;
+      const val = Math.max(0, parseFloat(e.target.value) || 0);
+      state.nodes[i].duration = val;
+      redistributeDurations(i);
+      renderAll();
+    });
+  });
+
+  list.querySelectorAll('.node-lock-btn').forEach(el => {
+    el.addEventListener('click', e => {
+      const i = +e.currentTarget.dataset.idx;
+      state.nodes[i].locked = !state.nodes[i].locked;
+      renderAll();
+    });
+  });
+
+  list.querySelectorAll('.node-remove-btn').forEach(el => {
+    el.addEventListener('click', e => {
+      removeNode(+e.currentTarget.dataset.idx);
+    });
+  });
+
+  draw();
+}
+
+const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// ════════════════════════════════════════════════════════
+//  SAVE — True-to-Size SVG
+// ════════════════════════════════════════════════════════
+function saveSVG(labeled) {
+  const maxR    = maxRadius();
+  const padding = 22;           // mm margin around the cam
+  const size    = (maxR + padding) * 2;
+  const cx      = size / 2;
+  const cy      = size / 2;
+  const TWO_PI  = Math.PI * 2;
+  const SAMPLES = 1440;
+
+  // Build cam profile path (sampled, in mm)
+  let pathD = '';
+  for (let i = 0; i <= SAMPLES; i++) {
+    const theta = (i / SAMPLES) * TWO_PI;
+    const r     = radiusAtAngle(theta);
+    const x     = (cx + Math.sin(theta) * r).toFixed(4);
+    const y     = (cy - Math.cos(theta) * r).toFixed(4);
+    pathD += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
+  }
+  pathD += ' Z';
+
+  // Node markers / labels
+  const angles = nodeAngles();
+  let nodesSVG = '';
+
+  state.nodes.forEach((node, i) => {
+    const theta  = angles[i];
+    const r      = state.baseCircle + node.mm;
+    const nx     = Math.sin(theta);
+    const ny     = -Math.cos(theta);
+    const px     = (cx + nx * r).toFixed(3);
+    const py     = (cy - Math.cos(theta) * r).toFixed(3);
+
+    // Dot at node position
+    nodesSVG += `  <circle cx="${px}" cy="${py}" r="1.2" fill="#1565c0"/>\n`;
+
+    if (labeled) {
+      // Extension line from base circle to node
+      const bx = (cx + nx * state.baseCircle).toFixed(3);
+      const by = (cy + ny * state.baseCircle).toFixed(3);
+      nodesSVG += `  <line x1="${bx}" y1="${by}" x2="${px}" y2="${py}"`
+               + ` stroke="#1565c0" stroke-width="0.3" stroke-dasharray="1,1"/>\n`;
+
+      // Label
+      const LDIST  = 7;
+      const lx     = (cx + nx * (r + LDIST)).toFixed(3);
+      const ly     = (cy + ny * (r + LDIST)).toFixed(3);
+      const anchor = nx >  0.15 ? 'start' : nx < -0.15 ? 'end' : 'middle';
+      const base   = ny >  0.15 ? 'hanging' : ny < -0.15 ? 'auto' : 'middle';
+      nodesSVG += `  <text x="${lx}" y="${ly}" text-anchor="${anchor}"`
+               + ` dominant-baseline="${base}"`
+               + ` font-family="Arial,sans-serif" font-size="3.5" fill="#37474f">`
+               + `${esc(node.name)} (${node.mm} mm)</text>\n`;
+    }
+  });
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Cam Profile Designer export -->
+<!-- Base: ${state.baseCircle} mm | Travel: ${state.travel} mm | Max Radius: ${maxR} mm -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${size}mm" height="${size}mm"
+     viewBox="0 0 ${size} ${size}">
+
+  <!-- Reference circles -->
+  <circle cx="${cx}" cy="${cy}" r="${state.baseCircle}"
+          fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
+  <circle cx="${cx}" cy="${cy}" r="${maxR}"
+          fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
+
+  <!-- Start indicator -->
+  <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${(cy - maxR - 10).toFixed(3)}"
+        stroke="#ef5350" stroke-width="0.3" stroke-dasharray="2,1.5"/>
+  <text x="${cx}" y="${(cy - maxR - 12).toFixed(3)}" text-anchor="middle"
+        dominant-baseline="auto"
+        font-family="Arial,sans-serif" font-size="3" fill="#ef5350">START</text>
+
+  <!-- Centre mark -->
+  <line x1="${(cx-3).toFixed(2)}" y1="${cy}" x2="${(cx+3).toFixed(2)}" y2="${cy}"
+        stroke="#546e7a" stroke-width="0.3"/>
+  <line x1="${cx}" y1="${(cy-3).toFixed(2)}" x2="${cx}" y2="${(cy+3).toFixed(2)}"
+        stroke="#546e7a" stroke-width="0.3"/>
+  <circle cx="${cx}" cy="${cy}" r="0.6" fill="#546e7a"/>
+
+  <!-- Cam profile -->
+  <path d="${pathD}"
+        fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>
+
+${nodesSVG}
+</svg>`;
+
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = labeled ? 'cam-profile-labelled.svg' : 'cam-profile.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+
+  document.getElementById('input-base').addEventListener('change', e => {
+    const val = Math.max(1, parseFloat(e.target.value) || 1);
+    state.baseCircle = val;
+    e.target.value   = val;
+    renderAll();
+  });
+
+  document.getElementById('input-travel').addEventListener('change', e => {
+    const oldTravel   = state.travel;
+    const val         = Math.max(0, parseFloat(e.target.value) || 0);
+    state.travel      = val;
+    e.target.value    = val;
+    // If a node was pinned to the old max travel, follow the new value
+    state.nodes.forEach(nd => {
+      if (nd.mm === oldTravel) nd.mm = val;
+      nd.mm = clamp(nd.mm, 0, val);
+    });
+    renderAll();
+  });
+
+  document.getElementById('btn-add-node').addEventListener('click', addNode);
+
+  document.getElementById('btn-save-outline').addEventListener('click', () => saveSVG(false));
+  document.getElementById('btn-save-labeled').addEventListener('click', () => saveSVG(true));
+
+  // Redraw when the canvas wrapper resizes
+  new ResizeObserver(() => draw()).observe(
+    document.getElementById('canvas-wrapper')
+  );
+
+  renderAll();
+});
+</script>
+</body>
+</html>
