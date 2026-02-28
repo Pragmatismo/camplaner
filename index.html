@@ -214,6 +214,40 @@
     .btn-export-labeled  { background: #2e7d32; color: #fff; }
     .btn-export-labeled:hover  { background: #1b5e20; }
 
+    /* Save / Load JSON row */
+    .btn-json-row { display: flex; gap: 8px; }
+    .btn-json {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .btn-json-save { background: #546e7a; color: #fff; }
+    .btn-json-save:hover { background: #37474f; }
+    .btn-json-load { background: #78909c; color: #fff; }
+    .btn-json-load:hover { background: #546e7a; }
+
+    /* Per-node curve mode button */
+    .node-curve-btn {
+      padding: 5px 7px;
+      background: #fafafa;
+      border: 1px solid #b0bec5;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      transition: all 0.15s;
+      margin-top: auto;
+      min-width: 36px;
+      text-align: center;
+    }
+    .node-curve-btn.mode-sharp  { background: #fff3e0; border-color: #ff9800; color: #e65100; }
+    .node-curve-btn.mode-direct { background: #e8f5e9; border-color: #4caf50; color: #1b5e20; }
+
     /* ── CANVAS AREA ────────────────────────────────────────── */
     #canvas-area {
       flex: 1;
@@ -290,6 +324,10 @@
     <div class="section">
       <div class="section-title">Export — True to Size SVG</div>
       <div class="export-btns">
+        <div class="btn-json-row">
+          <button class="btn-json btn-json-save" id="btn-save-json">Save</button>
+          <button class="btn-json btn-json-load" id="btn-load-json">Load</button>
+        </div>
         <button class="btn-export btn-export-outline" id="btn-save-outline">
           Save Outline
         </button>
@@ -320,11 +358,17 @@ const state = {
   baseCircle: 50,
   travel:     60,
   nodes: [
-    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false },
-    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false }
+    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft' },
+    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft' }
   ],
   nextId: 3
 };
+
+// ── Curve mode helpers ─────────────────────────────────
+const CURVE_MODES = ['soft', 'sharp', 'direct'];
+const nextCurveMode = mode => CURVE_MODES[(CURVE_MODES.indexOf(mode || 'soft') + 1) % CURVE_MODES.length];
+const curveIcon     = mode => mode === 'sharp' ? '∧' : mode === 'direct' ? '⌒' : '~';
+const curveLabel    = mode => mode === 'sharp' ? 'Sharp' : mode === 'direct' ? 'Direct (arc)' : 'Soft';
 
 // ════════════════════════════════════════════════════════
 //  GEOMETRY HELPERS
@@ -385,14 +429,30 @@ function radiusAtAngle(theta) {
   const t  = (theta - angles[seg]) / h;
   const t2 = t * t, t3 = t2 * t;
 
-  // Hermite basis
-  const h00 =  2*t3 - 3*t2 + 1;
-  const h10 =    t3 - 2*t2 + t;
-  const h01 = -2*t3 + 3*t2;
-  const h11 =    t3 -   t2;
+  const mode = nodes[seg].curveMode || 'soft';
+  let r;
 
-  const r = h00 * radii[seg]  + h10 * slopes[seg]  * h
-          + h01 * radii[next] + h11 * slopes[next] * h;
+  if (mode === 'sharp') {
+    // Linear interpolation — straight line in polar (r, θ) space; sharp joints at nodes
+    r = radii[seg] + t * (radii[next] - radii[seg]);
+
+  } else if (mode === 'direct') {
+    // Zero-slope Hermite — arc centred on the cam origin.
+    // When both endpoints share the same radius the path is exactly that circle.
+    const h00 =  2*t3 - 3*t2 + 1;
+    const h01 = -2*t3 + 3*t2;
+    r = h00 * radii[seg] + h01 * radii[next];
+
+  } else {
+    // Soft — full Catmull-Rom / Hermite spline (original behaviour)
+    const h00 =  2*t3 - 3*t2 + 1;
+    const h10 =    t3 - 2*t2 + t;
+    const h01 = -2*t3 + 3*t2;
+    const h11 =    t3 -   t2;
+    r = h00 * radii[seg]  + h10 * slopes[seg]  * h
+      + h01 * radii[next] + h11 * slopes[next] * h;
+  }
+
   return Math.max(0, r);
 }
 
@@ -611,11 +671,12 @@ function redistributeDurations(changedIndex) {
 function addNode() {
   const idx = state.nodes.length;
   state.nodes.push({
-    id:       state.nextId++,
-    name:     `Node ${idx + 1}`,
-    mm:       0,
-    duration: 0,
-    locked:   false
+    id:        state.nextId++,
+    name:      `Node ${idx + 1}`,
+    mm:        0,
+    duration:  0,
+    locked:    false,
+    curveMode: 'soft'
   });
   redistributeDurations(idx);
   renderAll();
@@ -698,6 +759,14 @@ function renderAll() {
             ${node.locked ? '🔒' : '🔓'}
           </button>
         </div>
+        <div class="node-field">
+          <div class="node-field-label">Curve</div>
+          <button class="node-curve-btn mode-${node.curveMode || 'soft'}"
+                  data-idx="${i}"
+                  title="Curve mode: ${curveLabel(node.curveMode || 'soft')} — click to cycle">
+            ${curveIcon(node.curveMode || 'soft')}
+          </button>
+        </div>
       </div>
     `;
     list.appendChild(card);
@@ -745,6 +814,14 @@ function renderAll() {
     });
   });
 
+  list.querySelectorAll('.node-curve-btn').forEach(el => {
+    el.addEventListener('click', e => {
+      const i = +e.currentTarget.dataset.idx;
+      state.nodes[i].curveMode = nextCurveMode(state.nodes[i].curveMode);
+      renderAll();
+    });
+  });
+
   list.querySelectorAll('.node-remove-btn').forEach(el => {
     el.addEventListener('click', e => {
       removeNode(+e.currentTarget.dataset.idx);
@@ -756,6 +833,69 @@ function renderAll() {
 
 const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// ════════════════════════════════════════════════════════
+//  SAVE / LOAD — JSON profile
+// ════════════════════════════════════════════════════════
+function saveJSON() {
+  const data = {
+    baseCircle: state.baseCircle,
+    travel:     state.travel,
+    nodes: state.nodes.map(n => ({
+      id:        n.id,
+      name:      n.name,
+      mm:        n.mm,
+      duration:  n.duration,
+      locked:    n.locked,
+      curveMode: n.curveMode || 'soft'
+    })),
+    nextId: state.nextId
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'cam-profile.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function loadJSON() {
+  const input = document.createElement('input');
+  input.type  = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const data = JSON.parse(evt.target.result);
+        if (!Array.isArray(data.nodes) || data.nodes.length < 2) throw new Error('Invalid profile');
+        state.baseCircle = +data.baseCircle || 50;
+        state.travel     = +data.travel     || 60;
+        state.nextId     = +data.nextId     || (data.nodes.length + 1);
+        state.nodes      = data.nodes.map(n => ({
+          id:        +n.id        || 1,
+          name:      String(n.name || 'Node'),
+          mm:        clamp(+n.mm || 0, 0, state.travel),
+          duration:  Math.max(0, +n.duration || 0),
+          locked:    !!n.locked,
+          curveMode: CURVE_MODES.includes(n.curveMode) ? n.curveMode : 'soft'
+        }));
+        document.getElementById('input-base').value   = state.baseCircle;
+        document.getElementById('input-travel').value = state.travel;
+        renderAll();
+      } catch (err) {
+        alert('Could not load profile: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+}
 
 // ════════════════════════════════════════════════════════
 //  SAVE — True-to-Size SVG
@@ -886,6 +1026,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('btn-add-node').addEventListener('click', addNode);
+
+  document.getElementById('btn-save-json').addEventListener('click', saveJSON);
+  document.getElementById('btn-load-json').addEventListener('click', loadJSON);
 
   document.getElementById('btn-save-outline').addEventListener('click', () => saveSVG(false));
   document.getElementById('btn-save-labeled').addEventListener('click', () => saveSVG(true));
