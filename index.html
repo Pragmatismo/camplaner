@@ -247,6 +247,7 @@
     }
     .node-curve-btn.mode-sharp  { background: #fff3e0; border-color: #ff9800; color: #e65100; }
     .node-curve-btn.mode-direct { background: #e8f5e9; border-color: #4caf50; color: #1b5e20; }
+    .node-curve-btn.mode-bezier { background: #fce4ec; border-color: #e91e63; color: #880e4f; }
 
     /* ── CANVAS AREA ────────────────────────────────────────── */
     #canvas-area {
@@ -358,22 +359,39 @@ const state = {
   baseCircle: 50,
   travel:     60,
   nodes: [
-    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft' },
-    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft' }
+    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft', cpIn: 0, cpOut: 0 },
+    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft', cpIn: 0, cpOut: 0 }
   ],
   nextId: 3
 };
 
+// Canvas geometry — updated by draw() so mouse handlers can convert px → polar
+let _cx = 0, _cy = 0, _scale = 1;
+// Bezier drag state
+let _drag    = null;   // { nodeIdx, type: 'in'|'out' } or null
+let _handles = [];     // [{ nodeIdx, type, x, y }, …] repopulated each draw()
+
 // ── Curve mode helpers ─────────────────────────────────
-const CURVE_MODES = ['soft', 'sharp', 'direct'];
+const CURVE_MODES   = ['soft', 'sharp', 'direct', 'bezier'];
 const nextCurveMode = mode => CURVE_MODES[(CURVE_MODES.indexOf(mode || 'soft') + 1) % CURVE_MODES.length];
-const curveIcon     = mode => mode === 'sharp' ? '∧' : mode === 'direct' ? '⌒' : '~';
-const curveLabel    = mode => mode === 'sharp' ? 'Sharp' : mode === 'direct' ? 'Direct (arc)' : 'Soft';
+const curveIcon     = mode => ({ sharp: '∧', direct: '⌒', bezier: '⌘' })[mode] ?? '~';
+const curveLabel    = mode => ({ sharp: 'Sharp', direct: 'Direct (arc)', bezier: 'Bezier' })[mode] ?? 'Soft';
 
 // ════════════════════════════════════════════════════════
 //  GEOMETRY HELPERS
 // ════════════════════════════════════════════════════════
 const maxRadius = () => state.baseCircle + state.travel;
+
+/** Catmull-Rom–style slopes (dr/dθ) at each node, given radius and span arrays. */
+function computeSlopes(radii, spans) {
+  const n = radii.length;
+  return radii.map((_, i) => {
+    const prev  = (i - 1 + n) % n;
+    const next  = (i + 1) % n;
+    const total = spans[prev] + spans[i];
+    return total < 1e-10 ? 0 : (radii[next] - radii[prev]) / total;
+  });
+}
 
 /** Cumulative start angles (radians) for each node. */
 function nodeAngles() {
@@ -404,14 +422,7 @@ function radiusAtAngle(theta) {
   const radii  = nodes.map(nd => state.baseCircle + nd.mm);
 
   // Catmull-Rom–style slopes at each node (periodic)
-  const slopes = radii.map((_, i) => {
-    const prev   = (i - 1 + n) % n;
-    const next   = (i + 1) % n;
-    const hPrev  = spans[prev];
-    const hNext  = spans[i];
-    const total  = hPrev + hNext;
-    return total < 1e-10 ? 0 : (radii[next] - radii[prev]) / total;
-  });
+  const slopes = computeSlopes(radii, spans);
 
   // Normalise theta → [0, 2π)
   theta = ((theta % TWO_PI) + TWO_PI) % TWO_PI;
@@ -442,6 +453,17 @@ function radiusAtAngle(theta) {
     const h00 =  2*t3 - 3*t2 + 1;
     const h01 = -2*t3 + 3*t2;
     r = h00 * radii[seg] + h01 * radii[next];
+
+  } else if (mode === 'bezier') {
+    // Bezier — Hermite with user-controlled slopes (cpOut at start, cpIn at end)
+    const m0 = typeof nodes[seg].cpOut  === 'number' ? nodes[seg].cpOut  : slopes[seg];
+    const m1 = typeof nodes[next].cpIn  === 'number' ? nodes[next].cpIn  : slopes[next];
+    const h00 =  2*t3 - 3*t2 + 1;
+    const h10 =    t3 - 2*t2 + t;
+    const h01 = -2*t3 + 3*t2;
+    const h11 =    t3 -   t2;
+    r = h00 * radii[seg]  + h10 * m0 * h
+      + h01 * radii[next] + h11 * m1 * h;
 
   } else {
     // Soft — full Catmull-Rom / Hermite spline (original behaviour)
@@ -485,6 +507,8 @@ function draw() {
   const scale  = (Math.min(W, H) / 2 - padPx) / maxR;
   const cx     = W / 2, cy = H / 2;
   const TWO_PI = Math.PI * 2;
+  // Expose for mouse event handlers
+  _cx = cx; _cy = cy; _scale = scale;
 
   // Background
   ctx.fillStyle = '#fafafa';
@@ -592,6 +616,78 @@ function draw() {
     ctx.restore();
   });
 
+  // ── Bezier control handles ────────────────────────────
+  _handles = [];
+  {
+    const n     = state.nodes.length;
+    const spans = state.nodes.map(nd => nd.duration / 100 * TWO_PI);
+
+    state.nodes.forEach((node, i) => {
+      const theta_i = angles[i];
+      const r_i     = state.baseCircle + node.mm;
+      const { x: px, y: py } = polarToXY(cx, cy, theta_i, r_i, scale);
+
+      // Outgoing handle — for the segment FROM this node (uses node.cpOut)
+      if ((node.curveMode || 'soft') === 'bezier') {
+        const h_next = spans[i];
+        const cpOut  = typeof node.cpOut === 'number' ? node.cpOut : 0;
+        const hTheta = theta_i + h_next / 3;
+        const hR     = r_i + cpOut * h_next / 3;
+        const { x: hx, y: hy } = polarToXY(cx, cy, hTheta, hR, scale);
+
+        ctx.save();
+        ctx.strokeStyle = '#e91e63';
+        ctx.lineWidth   = 1.2;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(hx, hy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(hx, hy, 5, 0, TWO_PI);
+        ctx.fillStyle   = '#e91e63';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+        ctx.restore();
+
+        _handles.push({ nodeIdx: i, type: 'out', x: hx, y: hy });
+      }
+
+      // Incoming handle — for the segment INTO this node (uses node.cpIn)
+      const prevIdx = (i - 1 + n) % n;
+      if ((state.nodes[prevIdx].curveMode || 'soft') === 'bezier') {
+        const h_prev = spans[prevIdx];
+        const cpIn   = typeof node.cpIn === 'number' ? node.cpIn : 0;
+        const hTheta = theta_i - h_prev / 3;
+        const hR     = r_i - cpIn * h_prev / 3;
+        const { x: hx, y: hy } = polarToXY(cx, cy, hTheta, hR, scale);
+
+        ctx.save();
+        ctx.strokeStyle = '#9c27b0';
+        ctx.lineWidth   = 1.2;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(hx, hy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(hx, hy, 5, 0, TWO_PI);
+        ctx.fillStyle   = '#9c27b0';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+        ctx.restore();
+
+        _handles.push({ nodeIdx: i, type: 'in', x: hx, y: hy });
+      }
+    });
+  }
+
   // ── Centre mark ──────────────────────────────────────
   ctx.save();
   const CH = 7;
@@ -676,7 +772,9 @@ function addNode() {
     mm:        0,
     duration:  0,
     locked:    false,
-    curveMode: 'soft'
+    curveMode: 'soft',
+    cpIn:      0,
+    cpOut:     0
   });
   redistributeDurations(idx);
   renderAll();
@@ -816,8 +914,17 @@ function renderAll() {
 
   list.querySelectorAll('.node-curve-btn').forEach(el => {
     el.addEventListener('click', e => {
-      const i = +e.currentTarget.dataset.idx;
-      state.nodes[i].curveMode = nextCurveMode(state.nodes[i].curveMode);
+      const i     = +e.currentTarget.dataset.idx;
+      const nodes = state.nodes;
+      nodes[i].curveMode = nextCurveMode(nodes[i].curveMode);
+      if (nodes[i].curveMode === 'bezier') {
+        // Seed from current Catmull-Rom slopes so the curve doesn't jump
+        const radii = nodes.map(nd => state.baseCircle + nd.mm);
+        const spans = nodes.map(nd => nd.duration / 100 * Math.PI * 2);
+        const s     = computeSlopes(radii, spans);
+        nodes[i].cpOut = s[i];
+        nodes[i].cpIn  = s[i];
+      }
       renderAll();
     });
   });
@@ -847,7 +954,9 @@ function saveJSON() {
       mm:        n.mm,
       duration:  n.duration,
       locked:    n.locked,
-      curveMode: n.curveMode || 'soft'
+      curveMode: n.curveMode || 'soft',
+      cpIn:      n.cpIn  || 0,
+      cpOut:     n.cpOut || 0
     })),
     nextId: state.nextId
   };
@@ -883,7 +992,9 @@ function loadJSON() {
           mm:        clamp(+n.mm || 0, 0, state.travel),
           duration:  Math.max(0, +n.duration || 0),
           locked:    !!n.locked,
-          curveMode: CURVE_MODES.includes(n.curveMode) ? n.curveMode : 'soft'
+          curveMode: CURVE_MODES.includes(n.curveMode) ? n.curveMode : 'soft',
+          cpIn:      typeof n.cpIn  === 'number' ? n.cpIn  : 0,
+          cpOut:     typeof n.cpOut === 'number' ? n.cpOut : 0
         }));
         document.getElementById('input-base').value   = state.baseCircle;
         document.getElementById('input-travel').value = state.travel;
@@ -1037,6 +1148,64 @@ document.addEventListener('DOMContentLoaded', () => {
   new ResizeObserver(() => draw()).observe(
     document.getElementById('canvas-wrapper')
   );
+
+  // ── Bezier handle drag ─────────────────────────────────────────────────
+  const canvas  = document.getElementById('cam-canvas');
+  const TWO_PI  = Math.PI * 2;
+
+  canvas.addEventListener('mousedown', e => {
+    const mx = e.offsetX, my = e.offsetY;
+    let best = null, bestDist = Infinity;
+    _handles.forEach(h => {
+      const d = Math.hypot(mx - h.x, my - h.y);
+      if (d < 10 && d < bestDist) { bestDist = d; best = h; }
+    });
+    if (best) {
+      _drag = { nodeIdx: best.nodeIdx, type: best.type };
+      canvas.style.cursor = 'grabbing';
+      e.preventDefault();
+    }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    const mx = e.offsetX, my = e.offsetY;
+    if (_drag) {
+      const dx  = mx - _cx;
+      const dy  = my - _cy;
+      const r_m = Math.hypot(dx, dy) / _scale;
+      const θ_m = ((Math.atan2(dx, -dy) % TWO_PI) + TWO_PI) % TWO_PI;
+
+      const node   = state.nodes[_drag.nodeIdx];
+      const angles = nodeAngles();
+      const θ_i    = angles[_drag.nodeIdx];
+      const r_i    = state.baseCircle + node.mm;
+
+      // Angular delta, normalised to ±π to handle the seam correctly
+      let dθ = θ_m - θ_i;
+      if (dθ >  Math.PI) dθ -= TWO_PI;
+      if (dθ < -Math.PI) dθ += TWO_PI;
+
+      if (Math.abs(dθ) > 1e-6) {
+        const slope = (r_m - r_i) / dθ;
+        if (_drag.type === 'out') node.cpOut = slope;
+        else                      node.cpIn  = slope;
+      }
+      draw();
+    } else {
+      // Hover cursor feedback
+      const near = _handles.some(h => Math.hypot(mx - h.x, my - h.y) < 10);
+      canvas.style.cursor = near ? 'grab' : 'default';
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    _drag = null;
+    canvas.style.cursor = 'default';
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (_drag) { _drag = null; canvas.style.cursor = 'default'; }
+  });
 
   renderAll();
 });
