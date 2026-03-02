@@ -359,8 +359,8 @@ const state = {
   baseCircle: 50,
   travel:     60,
   nodes: [
-    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft', cpIn: 0, cpOut: 0 },
-    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft', cpIn: 0, cpOut: 0 }
+    { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft', cpIn: { dt: 0, dr: 0 }, cpOut: { dt: 0, dr: 0 } },
+    { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft', cpIn: { dt: 0, dr: 0 }, cpOut: { dt: 0, dr: 0 } }
   ],
   nextId: 3
 };
@@ -455,9 +455,10 @@ function radiusAtAngle(theta) {
     r = h00 * radii[seg] + h01 * radii[next];
 
   } else if (mode === 'bezier') {
-    // Bezier — Hermite with user-controlled slopes (cpOut at start, cpIn at end)
-    const m0 = typeof nodes[seg].cpOut  === 'number' ? nodes[seg].cpOut  : slopes[seg];
-    const m1 = typeof nodes[next].cpIn  === 'number' ? nodes[next].cpIn  : slopes[next];
+    // Bezier — Hermite with user-controlled slopes derived from handle offsets
+    const co = nodes[seg].cpOut,  ci = nodes[next].cpIn;
+    const m0 = (co && Math.abs(co.dt) > 1e-10) ? co.dr / co.dt : slopes[seg];
+    const m1 = (ci && Math.abs(ci.dt) > 1e-10) ? ci.dr / ci.dt : slopes[next];
     const h00 =  2*t3 - 3*t2 + 1;
     const h10 =    t3 - 2*t2 + t;
     const h01 = -2*t3 + 3*t2;
@@ -629,10 +630,9 @@ function draw() {
 
       // Outgoing handle — for the segment FROM this node (uses node.cpOut)
       if ((node.curveMode || 'soft') === 'bezier') {
-        const h_next = spans[i];
-        const cpOut  = typeof node.cpOut === 'number' ? node.cpOut : 0;
-        const hTheta = theta_i + h_next / 3;
-        const hR     = r_i + cpOut * h_next / 3;
+        const cpOut  = node.cpOut || { dt: 0, dr: 0 };
+        const hTheta = theta_i + cpOut.dt;
+        const hR     = r_i     + cpOut.dr;
         const { x: hx, y: hy } = polarToXY(cx, cy, hTheta, hR, scale);
 
         ctx.save();
@@ -659,10 +659,9 @@ function draw() {
       // Incoming handle — for the segment INTO this node (uses node.cpIn)
       const prevIdx = (i - 1 + n) % n;
       if ((state.nodes[prevIdx].curveMode || 'soft') === 'bezier') {
-        const h_prev = spans[prevIdx];
-        const cpIn   = typeof node.cpIn === 'number' ? node.cpIn : 0;
-        const hTheta = theta_i - h_prev / 3;
-        const hR     = r_i - cpIn * h_prev / 3;
+        const cpIn   = node.cpIn || { dt: 0, dr: 0 };
+        const hTheta = theta_i + cpIn.dt;
+        const hR     = r_i     + cpIn.dr;
         const { x: hx, y: hy } = polarToXY(cx, cy, hTheta, hR, scale);
 
         ctx.save();
@@ -773,8 +772,8 @@ function addNode() {
     duration:  0,
     locked:    false,
     curveMode: 'soft',
-    cpIn:      0,
-    cpOut:     0
+    cpIn:      { dt: 0, dr: 0 },
+    cpOut:     { dt: 0, dr: 0 }
   });
   redistributeDurations(idx);
   renderAll();
@@ -918,12 +917,18 @@ function renderAll() {
       const nodes = state.nodes;
       nodes[i].curveMode = nextCurveMode(nodes[i].curveMode);
       if (nodes[i].curveMode === 'bezier') {
-        // Seed from current Catmull-Rom slopes so the curve doesn't jump
-        const radii = nodes.map(nd => state.baseCircle + nd.mm);
-        const spans = nodes.map(nd => nd.duration / 100 * Math.PI * 2);
-        const s     = computeSlopes(radii, spans);
-        nodes[i].cpOut = s[i];
-        nodes[i].cpIn  = s[i];
+        // Seed from current Catmull-Rom slopes so the curve doesn't jump.
+        // Store as {dt, dr} polar offsets: handle is placed at ±h/3 from the node,
+        // with dr chosen so that dr/dt = Catmull-Rom slope (curve is unchanged).
+        const radii    = nodes.map(nd => state.baseCircle + nd.mm);
+        const spans    = nodes.map(nd => nd.duration / 100 * Math.PI * 2);
+        const s        = computeSlopes(radii, spans);
+        const n        = nodes.length;
+        const prevIdx  = (i - 1 + n) % n;
+        const dtOut    =  spans[i]       / 3;
+        const dtIn     = -spans[prevIdx] / 3;
+        nodes[i].cpOut = { dt: dtOut, dr: s[i] * dtOut };
+        nodes[i].cpIn  = { dt: dtIn,  dr: s[i] * dtIn  };
       }
       renderAll();
     });
@@ -955,8 +960,8 @@ function saveJSON() {
       duration:  n.duration,
       locked:    n.locked,
       curveMode: n.curveMode || 'soft',
-      cpIn:      n.cpIn  || 0,
-      cpOut:     n.cpOut || 0
+      cpIn:      n.cpIn  ?? { dt: 0, dr: 0 },
+      cpOut:     n.cpOut ?? { dt: 0, dr: 0 }
     })),
     nextId: state.nextId
   };
@@ -993,8 +998,8 @@ function loadJSON() {
           duration:  Math.max(0, +n.duration || 0),
           locked:    !!n.locked,
           curveMode: CURVE_MODES.includes(n.curveMode) ? n.curveMode : 'soft',
-          cpIn:      typeof n.cpIn  === 'number' ? n.cpIn  : 0,
-          cpOut:     typeof n.cpOut === 'number' ? n.cpOut : 0
+          cpIn:      (n.cpIn  && typeof n.cpIn  === 'object') ? n.cpIn  : { dt: 0, dr: 0 },
+          cpOut:     (n.cpOut && typeof n.cpOut === 'object') ? n.cpOut : { dt: 0, dr: 0 }
         }));
         document.getElementById('input-base').value   = state.baseCircle;
         document.getElementById('input-travel').value = state.travel;
@@ -1185,10 +1190,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (dθ >  Math.PI) dθ -= TWO_PI;
       if (dθ < -Math.PI) dθ += TWO_PI;
 
-      if (Math.abs(dθ) > 1e-6) {
-        const slope = (r_m - r_i) / dθ;
-        if (_drag.type === 'out') node.cpOut = slope;
-        else                      node.cpIn  = slope;
+      const dr = r_m - r_i;
+      if (_drag.type === 'out') {
+        // Outgoing handle: clamp dt > 0 (must stay ahead of node)
+        node.cpOut = { dt: Math.max(1e-4, dθ), dr };
+      } else {
+        // Incoming handle: clamp dt < 0 (must stay behind node)
+        node.cpIn  = { dt: Math.min(-1e-4, dθ), dr };
       }
       draw();
     } else {
