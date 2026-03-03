@@ -213,6 +213,8 @@
     .btn-export-outline:hover  { background: #263238; }
     .btn-export-labeled  { background: #2e7d32; color: #fff; }
     .btn-export-labeled:hover  { background: #1b5e20; }
+    .btn-export-svg      { background: #1565c0; color: #fff; }
+    .btn-export-svg:hover      { background: #0d47a1; }
 
     /* Save / Load JSON row */
     .btn-json-row { display: flex; gap: 8px; }
@@ -399,6 +401,9 @@
         </button>
         <button class="btn-export btn-export-labeled" id="btn-save-labeled">
           Save Labelled
+        </button>
+        <button class="btn-export btn-export-svg" id="btn-save-svg">
+          Save SVG
         </button>
       </div>
     </div>
@@ -1374,6 +1379,80 @@ ${nodesSVG}
 }
 
 // ════════════════════════════════════════════════════════
+//  SAVE — Clean SVG (no annotations, no labels)
+// ════════════════════════════════════════════════════════
+function saveSVGClean() {
+  const maxR        = maxRadius();
+  const cw          = state.channelWidth;
+  const ow          = state.outerWidth;
+  const hasOuter    = ow > 0;
+  const outerExtent = hasOuter ? maxR + cw + ow : maxR;
+  const padding     = 22;
+  const size        = (outerExtent + padding) * 2;
+  const cx          = size / 2;
+  const cy          = size / 2;
+  const TWO_PI      = Math.PI * 2;
+  const SAMPLES     = 1440;
+  const f4          = v => v.toFixed(4);
+  const f3          = v => v.toFixed(3);
+
+  function buildCamPathD(offsetMM) {
+    let d = '';
+    for (let i = 0; i <= SAMPLES; i++) {
+      const theta = (i / SAMPLES) * TWO_PI;
+      const r     = radiusAtAngle(theta) + offsetMM;
+      const x     = f4(cx + Math.sin(theta) * r);
+      const y     = f4(cy - Math.cos(theta) * r);
+      d += i === 0 ? `M ${x},${y}` : ` L ${x},${y}`;
+    }
+    return d + ' Z';
+  }
+
+  const camPathD = buildCamPathD(0);
+
+  // Hole
+  const holeR = state.holeDiameter ? state.holeDiameter / 2 : 0;
+  let holeSVG = '';
+  if (holeR > 0) {
+    const hd = holeSVGPath(cx, cy, holeR, state.holeShape);
+    holeSVG = `  <path d="${hd}" fill="none" stroke="#000000" stroke-width="0.5"/>\n`;
+  }
+
+  // Outer piece
+  let outerSVG = '';
+  if (hasOuter) {
+    const innerOffsetPathD = buildCamPathD(cw);
+    const outerEdge = state.outerCircle
+      ? `  <circle cx="${f3(cx)}" cy="${f3(cy)}" r="${f3(maxR + cw + ow)}" fill="none" stroke="#000000" stroke-width="0.5"/>\n`
+      : `  <path d="${buildCamPathD(cw + ow)}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>\n`;
+    outerSVG = `  <path d="${innerOffsetPathD}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round" stroke-dasharray="1.5,1"/>\n`
+      + outerEdge;
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Cam Profile Designer export -->
+<!-- Base: ${state.baseCircle} mm | Travel: ${state.travel} mm | Max Radius: ${maxR} mm -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${size}mm" height="${size}mm"
+     viewBox="0 0 ${size} ${size}">
+
+  <!-- Cam profile -->
+  <path d="${camPathD}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>
+
+${outerSVG}${holeSVG}</svg>`;
+
+  const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'cam-profile-clean.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ════════════════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
@@ -1443,6 +1522,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-save-outline').addEventListener('click', () => saveSVG(false));
   document.getElementById('btn-save-labeled').addEventListener('click', () => saveSVG(true));
+  document.getElementById('btn-save-svg').addEventListener('click', saveSVGClean);
 
   // Redraw when the canvas wrapper resizes
   new ResizeObserver(() => draw()).observe(
