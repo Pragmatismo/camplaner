@@ -231,6 +231,42 @@
     .btn-json-load { background: #78909c; color: #fff; }
     .btn-json-load:hover { background: #546e7a; }
 
+    /* Toggle button (hole shape, etc.) */
+    .btn-toggle {
+      padding: 4px 8px;
+      background: #fafafa;
+      border: 1px solid #b0bec5;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      transition: all 0.15s;
+      min-width: 34px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .btn-toggle:hover { background: #e3f2fd; border-color: #1565c0; }
+
+    /* Inline checkbox + label */
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #546e7a;
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .checkbox-label input[type="checkbox"] { cursor: pointer; }
+
+    /* Sub-section divider */
+    .sub-divider {
+      border: none;
+      border-top: 1px solid #eceff1;
+      margin: 2px 0;
+    }
+
     /* Per-node curve mode button */
     .node-curve-btn {
       padding: 5px 7px;
@@ -305,6 +341,35 @@
         <span class="unit-label">mm</span>
       </div>
 
+      <hr class="sub-divider">
+
+      <!-- Central hole -->
+      <div class="field-row">
+        <label>Centre Hole ⌀</label>
+        <input type="number" id="input-hole-dia" min="0" max="500" step="0.5"
+               placeholder="—" style="width:60px">
+        <span class="unit-label">mm</span>
+        <button id="btn-hole-shape" class="btn-toggle" title="Hole shape — click to cycle">○</button>
+      </div>
+
+      <hr class="sub-divider">
+
+      <!-- Channel & outer piece -->
+      <div class="field-row">
+        <label>Channel Width</label>
+        <input type="number" id="input-channel-width" min="0" max="200" step="0.5" value="2">
+        <span class="unit-label">mm</span>
+      </div>
+
+      <div class="field-row">
+        <label>Outer Width</label>
+        <input type="number" id="input-outer-width" min="0" max="500" step="0.5" value="10">
+        <span class="unit-label">mm</span>
+        <label class="checkbox-label">
+          <input type="checkbox" id="chk-outer-circle" checked> Circle
+        </label>
+      </div>
+
       <div class="info-box">
         Max radius: <strong id="max-radius-val">110</strong> mm
         &nbsp;·&nbsp; ⌀ <strong id="max-dia-val">220</strong> mm
@@ -356,8 +421,13 @@
 //  STATE
 // ════════════════════════════════════════════════════════
 const state = {
-  baseCircle: 50,
-  travel:     60,
+  baseCircle:   50,
+  travel:       60,
+  holeDiameter: null,   // mm, null = no hole (just crosshair)
+  holeShape:    'circle', // 'circle' | 'square' | 'rectangle' | 'octagon'
+  channelWidth: 2,      // mm gap between cam and outer piece
+  outerWidth:   10,     // mm width of outer piece; 0 = disabled
+  outerCircle:  true,   // true = circular outer edge; false = cam-conforming
   nodes: [
     { id: 1, name: 'Node 1', mm: 0,  duration: 50, locked: false, curveMode: 'soft', cpIn: { dt: 0, dr: 0 }, cpOut: { dt: 0, dr: 0 } },
     { id: 2, name: 'Node 2', mm: 60, duration: 50, locked: false, curveMode: 'soft', cpIn: { dt: 0, dr: 0 }, cpOut: { dt: 0, dr: 0 } }
@@ -503,9 +573,12 @@ function draw() {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  const maxR   = maxRadius();
+  const maxR        = maxRadius();
+  const outerExtent = state.outerWidth > 0
+    ? maxR + state.channelWidth + state.outerWidth
+    : maxR;
   const padPx  = 52;
-  const scale  = (Math.min(W, H) / 2 - padPx) / maxR;
+  const scale  = (Math.min(W, H) / 2 - padPx) / outerExtent;
   const cx     = W / 2, cy = H / 2;
   const TWO_PI = Math.PI * 2;
   // Expose for mouse event handlers
@@ -552,7 +625,7 @@ function draw() {
   ctx.setLineDash([4, 3]);
   ctx.beginPath();
   ctx.moveTo(cx, cy + state.baseCircle * scale * 0.25);
-  ctx.lineTo(cx, cy - maxR * scale - 16);
+  ctx.lineTo(cx, cy - outerExtent * scale - 16);
   ctx.stroke();
   ctx.restore();
 
@@ -561,26 +634,108 @@ function draw() {
   ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
-  ctx.fillText('START', cx, cy - maxR * scale - 18);
+  ctx.fillText('START', cx, cy - outerExtent * scale - 18);
   ctx.restore();
 
   // ── Cam profile (sampled polar curve) ────────────────
   const SAMPLES = 720;
+  const holeR = state.holeDiameter ? state.holeDiameter / 2 : 0;
+
+  // Helper: build cam profile path commands into current ctx path
+  function addCamPath() {
+    for (let i = 0; i <= SAMPLES; i++) {
+      const theta = (i / SAMPLES) * TWO_PI;
+      const r = radiusAtAngle(theta);
+      const { x, y } = polarToXY(cx, cy, theta, r, scale);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  // Helper: build offset cam path (cam radius + offset mm) into current ctx path
+  function addOffsetCamPath(offsetMM) {
+    for (let i = 0; i <= SAMPLES; i++) {
+      const theta = (i / SAMPLES) * TWO_PI;
+      const r = radiusAtAngle(theta) + offsetMM;
+      const { x, y } = polarToXY(cx, cy, theta, r, scale);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  // Fill cam + hole cutout (evenodd)
   ctx.save();
   ctx.beginPath();
-  for (let i = 0; i <= SAMPLES; i++) {
-    const theta = (i / SAMPLES) * TWO_PI;
-    const r = radiusAtAngle(theta);
-    const { x, y } = polarToXY(cx, cy, theta, r, scale);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fillStyle   = 'rgba(21,101,192,0.07)';
-  ctx.fill();
+  addCamPath();
+  if (holeR > 0) addHolePath(ctx, cx, cy, holeR * scale, state.holeShape);
+  ctx.fillStyle = 'rgba(21,101,192,0.07)';
+  ctx.fill('evenodd');
+  ctx.restore();
+
+  // Stroke cam outline
+  ctx.save();
+  ctx.beginPath();
+  addCamPath();
   ctx.strokeStyle = '#1565c0';
   ctx.lineWidth   = 2;
   ctx.stroke();
   ctx.restore();
+
+  // ── Outer piece (channel + outer ring) ───────────────
+  if (state.outerWidth > 0) {
+    const cw = state.channelWidth;
+    const ow = state.outerWidth;
+    const outerCircleR = (maxR + cw + ow) * scale;
+
+    // Fill outer ring (evenodd: outer path + inner cutout)
+    ctx.save();
+    ctx.beginPath();
+    if (state.outerCircle) {
+      ctx.arc(cx, cy, outerCircleR, 0, TWO_PI);  // outer circle
+    } else {
+      addOffsetCamPath(cw + ow);                  // outer shaped
+    }
+    addOffsetCamPath(cw);                          // inner (channel boundary)
+    ctx.fillStyle = 'rgba(255,152,0,0.10)';
+    ctx.fill('evenodd');
+    ctx.restore();
+
+    // Stroke outer edge
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#e65100';
+    ctx.beginPath();
+    if (state.outerCircle) {
+      ctx.arc(cx, cy, outerCircleR, 0, TWO_PI);
+    } else {
+      addOffsetCamPath(cw + ow);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Stroke inner edge of outer piece (channel boundary) — dashed
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#ff9800';
+    ctx.setLineDash([3, 2]);
+    ctx.beginPath();
+    addOffsetCamPath(cw);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── Central hole outline ──────────────────────────────
+  if (holeR > 0) {
+    ctx.save();
+    ctx.beginPath();
+    addHolePath(ctx, cx, cy, holeR * scale, state.holeShape);
+    ctx.fillStyle   = 'rgba(255,255,255,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = '#546e7a';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // ── Node markers ─────────────────────────────────────
   const angles = nodeAngles();
@@ -687,19 +842,22 @@ function draw() {
     });
   }
 
-  // ── Centre mark ──────────────────────────────────────
+  // ── Centre mark (crosshair) ──────────────────────────
+  // Always shown on canvas preview; for SVG see saveSVG()
   ctx.save();
-  const CH = 7;
+  const CH = holeR > 0 ? Math.max(holeR * scale + 4, 7) : 7;
   ctx.strokeStyle = '#78909c';
   ctx.lineWidth   = 0.75;
   ctx.beginPath();
   ctx.moveTo(cx - CH, cy); ctx.lineTo(cx + CH, cy);
   ctx.moveTo(cx, cy - CH); ctx.lineTo(cx, cy + CH);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy, 2, 0, TWO_PI);
-  ctx.fillStyle = '#78909c';
-  ctx.fill();
+  if (holeR === 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, TWO_PI);
+    ctx.fillStyle = '#78909c';
+    ctx.fill();
+  }
   ctx.restore();
 
   // ── Scale bar ────────────────────────────────────────
@@ -947,12 +1105,78 @@ const esc   = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // ════════════════════════════════════════════════════════
+//  HOLE SHAPE HELPERS
+// ════════════════════════════════════════════════════════
+const HOLE_SHAPES = ['circle', 'square', 'rectangle', 'octagon'];
+const HOLE_ICONS  = { circle: '○', square: '□', rectangle: '▬', octagon: '⬡' };
+
+/**
+ * Add a hole-shape sub-path to the current canvas path (call ctx.beginPath first).
+ * r = radius / half-size in canvas pixels.
+ * For rectangle the "diameter" is the short axis; long axis = 2×.
+ */
+function addHolePath(ctx, cx, cy, r, shape) {
+  const TWO_PI = Math.PI * 2;
+  switch (shape) {
+    case 'circle':
+      ctx.arc(cx, cy, r, 0, TWO_PI);
+      break;
+    case 'square':
+      ctx.rect(cx - r, cy - r, r * 2, r * 2);
+      break;
+    case 'rectangle':
+      ctx.rect(cx - r, cy - r * 2, r * 2, r * 4);
+      break;
+    case 'octagon': {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TWO_PI - Math.PI / 2;
+        const x = cx + r * Math.cos(a);
+        const y = cy + r * Math.sin(a);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      break;
+    }
+  }
+}
+
+/** Build an SVG path-data string for the hole shape (in mm coords). */
+function holeSVGPath(cx, cy, r, shape) {
+  const f = v => v.toFixed(4);
+  switch (shape) {
+    case 'circle':
+      // Two 180° arcs (SVG can't do a full arc in one command)
+      return `M ${f(cx+r)},${f(cy)} A ${f(r)},${f(r)} 0 1,1 ${f(cx-r)},${f(cy)} A ${f(r)},${f(r)} 0 1,1 ${f(cx+r)},${f(cy)} Z`;
+    case 'square':
+      return `M ${f(cx-r)},${f(cy-r)} L ${f(cx+r)},${f(cy-r)} L ${f(cx+r)},${f(cy+r)} L ${f(cx-r)},${f(cy+r)} Z`;
+    case 'rectangle':
+      return `M ${f(cx-r)},${f(cy-2*r)} L ${f(cx+r)},${f(cy-2*r)} L ${f(cx+r)},${f(cy+2*r)} L ${f(cx-r)},${f(cy+2*r)} Z`;
+    case 'octagon': {
+      let d = '';
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+        const x = f(cx + r * Math.cos(a));
+        const y = f(cy + r * Math.sin(a));
+        d += i === 0 ? `M ${x},${y}` : ` L ${x},${y}`;
+      }
+      return d + ' Z';
+    }
+  }
+  return '';
+}
+
+// ════════════════════════════════════════════════════════
 //  SAVE / LOAD — JSON profile
 // ════════════════════════════════════════════════════════
 function saveJSON() {
   const data = {
-    baseCircle: state.baseCircle,
-    travel:     state.travel,
+    baseCircle:   state.baseCircle,
+    travel:       state.travel,
+    holeDiameter: state.holeDiameter,
+    holeShape:    state.holeShape,
+    channelWidth: state.channelWidth,
+    outerWidth:   state.outerWidth,
+    outerCircle:  state.outerCircle,
     nodes: state.nodes.map(n => ({
       id:        n.id,
       name:      n.name,
@@ -988,9 +1212,14 @@ function loadJSON() {
       try {
         const data = JSON.parse(evt.target.result);
         if (!Array.isArray(data.nodes) || data.nodes.length < 2) throw new Error('Invalid profile');
-        state.baseCircle = +data.baseCircle || 50;
-        state.travel     = +data.travel     || 60;
-        state.nextId     = +data.nextId     || (data.nodes.length + 1);
+        state.baseCircle   = +data.baseCircle || 50;
+        state.travel       = +data.travel     || 60;
+        state.holeDiameter = (data.holeDiameter != null && data.holeDiameter !== '') ? +data.holeDiameter : null;
+        state.holeShape    = HOLE_SHAPES.includes(data.holeShape) ? data.holeShape : 'circle';
+        state.channelWidth = data.channelWidth != null ? Math.max(0, +data.channelWidth) : 2;
+        state.outerWidth   = data.outerWidth   != null ? Math.max(0, +data.outerWidth)   : 10;
+        state.outerCircle  = data.outerCircle  != null ? !!data.outerCircle : true;
+        state.nextId       = +data.nextId || (data.nodes.length + 1);
         state.nodes      = data.nodes.map(n => ({
           id:        +n.id        || 1,
           name:      String(n.name || 'Node'),
@@ -1001,8 +1230,13 @@ function loadJSON() {
           cpIn:      (n.cpIn  && typeof n.cpIn  === 'object') ? n.cpIn  : { dt: 0, dr: 0 },
           cpOut:     (n.cpOut && typeof n.cpOut === 'object') ? n.cpOut : { dt: 0, dr: 0 }
         }));
-        document.getElementById('input-base').value   = state.baseCircle;
-        document.getElementById('input-travel').value = state.travel;
+        document.getElementById('input-base').value          = state.baseCircle;
+        document.getElementById('input-travel').value        = state.travel;
+        document.getElementById('input-hole-dia').value      = state.holeDiameter != null ? state.holeDiameter : '';
+        document.getElementById('btn-hole-shape').textContent = HOLE_ICONS[state.holeShape] || '○';
+        document.getElementById('input-channel-width').value = state.channelWidth;
+        document.getElementById('input-outer-width').value   = state.outerWidth;
+        document.getElementById('chk-outer-circle').checked  = state.outerCircle;
         renderAll();
       } catch (err) {
         alert('Could not load profile: ' + err.message);
@@ -1017,57 +1251,90 @@ function loadJSON() {
 //  SAVE — True-to-Size SVG
 // ════════════════════════════════════════════════════════
 function saveSVG(labeled) {
-  const maxR    = maxRadius();
-  const padding = 22;           // mm margin around the cam
-  const size    = (maxR + padding) * 2;
-  const cx      = size / 2;
-  const cy      = size / 2;
-  const TWO_PI  = Math.PI * 2;
-  const SAMPLES = 1440;
+  const maxR       = maxRadius();
+  const cw         = state.channelWidth;
+  const ow         = state.outerWidth;
+  const hasOuter   = ow > 0;
+  const outerExtent = hasOuter ? maxR + cw + ow : maxR;
+  const padding    = 22;           // mm margin
+  const size       = (outerExtent + padding) * 2;
+  const cx         = size / 2;
+  const cy         = size / 2;
+  const TWO_PI     = Math.PI * 2;
+  const SAMPLES    = 1440;
+  const f4         = v => v.toFixed(4);
+  const f3         = v => v.toFixed(3);
 
-  // Build cam profile path (sampled, in mm)
-  let pathD = '';
-  for (let i = 0; i <= SAMPLES; i++) {
-    const theta = (i / SAMPLES) * TWO_PI;
-    const r     = radiusAtAngle(theta);
-    const x     = (cx + Math.sin(theta) * r).toFixed(4);
-    const y     = (cy - Math.cos(theta) * r).toFixed(4);
-    pathD += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
+  // Build a sampled polar path (in SVG mm coords), offset by offsetMM from cam profile
+  function buildCamPathD(offsetMM) {
+    let d = '';
+    for (let i = 0; i <= SAMPLES; i++) {
+      const theta = (i / SAMPLES) * TWO_PI;
+      const r     = radiusAtAngle(theta) + offsetMM;
+      const x     = f4(cx + Math.sin(theta) * r);
+      const y     = f4(cy - Math.cos(theta) * r);
+      d += i === 0 ? `M ${x},${y}` : ` L ${x},${y}`;
+    }
+    return d + ' Z';
   }
-  pathD += ' Z';
 
-  // Node markers / labels
+  const camPathD = buildCamPathD(0);
+
+  // ── Hole ────────────────────────────────────────────────
+  const holeR   = state.holeDiameter ? state.holeDiameter / 2 : 0;
+  let holeSVG   = '';
+  if (holeR > 0) {
+    const hd = holeSVGPath(cx, cy, holeR, state.holeShape);
+    holeSVG = `  <!-- Central hole -->\n  <path d="${hd}" fill="none" stroke="#000000" stroke-width="0.5"/>\n`;
+  }
+
+  // ── Centre mark (cross) ─────────────────────────────────
+  const crossR = holeR > 0 ? holeR + 3 : 3;
+  let centreSVG = '';
+  if (labeled) {
+    // Always show cross in labelled; extend arms outside hole
+    centreSVG = `  <!-- Centre mark -->\n`
+      + `  <line x1="${f3(cx-crossR)}" y1="${f3(cy)}" x2="${f3(cx+crossR)}" y2="${f3(cy)}" stroke="#546e7a" stroke-width="0.3"/>\n`
+      + `  <line x1="${f3(cx)}" y1="${f3(cy-crossR)}" x2="${f3(cx)}" y2="${f3(cy+crossR)}" stroke="#546e7a" stroke-width="0.3"/>\n`;
+    if (holeR === 0) {
+      centreSVG += `  <circle cx="${f3(cx)}" cy="${f3(cy)}" r="0.6" fill="#546e7a"/>\n`;
+    }
+  }
+  // Outline (no hole): no cross, no centre dot — nothing needed
+
+  // ── Outer piece paths ────────────────────────────────────
+  let outerSVG = '';
+  if (hasOuter) {
+    const innerOffsetPathD = buildCamPathD(cw);            // channel boundary
+    const outerEdge = state.outerCircle
+      ? `  <!-- Outer circle -->\n  <circle cx="${f3(cx)}" cy="${f3(cy)}" r="${f3(maxR + cw + ow)}" fill="none" stroke="#000000" stroke-width="0.5"/>\n`
+      : `  <!-- Outer shaped edge -->\n  <path d="${buildCamPathD(cw + ow)}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>\n`;
+    outerSVG = `  <!-- Channel inner boundary (offset ${cw} mm) -->\n`
+      + `  <path d="${innerOffsetPathD}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round" stroke-dasharray="1.5,1"/>\n`
+      + outerEdge;
+  }
+
+  // ── Node markers / labels ────────────────────────────────
   const angles = nodeAngles();
   let nodesSVG = '';
-
   state.nodes.forEach((node, i) => {
-    const theta  = angles[i];
-    const r      = state.baseCircle + node.mm;
-    const nx     = Math.sin(theta);
-    const ny     = -Math.cos(theta);
-    const px     = (cx + nx * r).toFixed(3);
-    const py     = (cy - Math.cos(theta) * r).toFixed(3);
-
-    // Dot at node position
+    const theta = angles[i];
+    const r     = state.baseCircle + node.mm;
+    const nx    = Math.sin(theta);
+    const ny    = -Math.cos(theta);
+    const px    = f3(cx + nx * r);
+    const py    = f3(cy - Math.cos(theta) * r);
     nodesSVG += `  <circle cx="${px}" cy="${py}" r="1.2" fill="#1565c0"/>\n`;
-
     if (labeled) {
-      // Extension line from base circle to node
-      const bx = (cx + nx * state.baseCircle).toFixed(3);
-      const by = (cy + ny * state.baseCircle).toFixed(3);
-      nodesSVG += `  <line x1="${bx}" y1="${by}" x2="${px}" y2="${py}"`
-               + ` stroke="#1565c0" stroke-width="0.3" stroke-dasharray="1,1"/>\n`;
-
-      // Label
+      const bx     = f3(cx + nx * state.baseCircle);
+      const by     = f3(cy + ny * state.baseCircle);
+      nodesSVG += `  <line x1="${bx}" y1="${by}" x2="${px}" y2="${py}" stroke="#1565c0" stroke-width="0.3" stroke-dasharray="1,1"/>\n`;
       const LDIST  = 7;
-      const lx     = (cx + nx * (r + LDIST)).toFixed(3);
-      const ly     = (cy + ny * (r + LDIST)).toFixed(3);
+      const lx     = f3(cx + nx * (r + LDIST));
+      const ly     = f3(cy + ny * (r + LDIST));
       const anchor = nx >  0.15 ? 'start' : nx < -0.15 ? 'end' : 'middle';
       const base   = ny >  0.15 ? 'hanging' : ny < -0.15 ? 'auto' : 'middle';
-      nodesSVG += `  <text x="${lx}" y="${ly}" text-anchor="${anchor}"`
-               + ` dominant-baseline="${base}"`
-               + ` font-family="Arial,sans-serif" font-size="3.5" fill="#37474f">`
-               + `${esc(node.name)} (${node.mm} mm)</text>\n`;
+      nodesSVG += `  <text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="${base}" font-family="Arial,sans-serif" font-size="3.5" fill="#37474f">${esc(node.name)} (${node.mm} mm)</text>\n`;
     }
   });
 
@@ -1078,30 +1345,20 @@ function saveSVG(labeled) {
      width="${size}mm" height="${size}mm"
      viewBox="0 0 ${size} ${size}">
 
-  <!-- Reference circles -->
-  <circle cx="${cx}" cy="${cy}" r="${state.baseCircle}"
-          fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
-  <circle cx="${cx}" cy="${cy}" r="${maxR}"
-          fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
+  <!-- Reference circles (guides only) -->
+  <circle cx="${f3(cx)}" cy="${f3(cy)}" r="${state.baseCircle}" fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
+  <circle cx="${f3(cx)}" cy="${f3(cy)}" r="${maxR}" fill="none" stroke="#cccccc" stroke-width="0.3" stroke-dasharray="2,2"/>
 
   <!-- Start indicator -->
-  <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${(cy - maxR - 10).toFixed(3)}"
-        stroke="#ef5350" stroke-width="0.3" stroke-dasharray="2,1.5"/>
-  <text x="${cx}" y="${(cy - maxR - 12).toFixed(3)}" text-anchor="middle"
-        dominant-baseline="auto"
-        font-family="Arial,sans-serif" font-size="3" fill="#ef5350">START</text>
-
-  <!-- Centre mark -->
-  <line x1="${(cx-3).toFixed(2)}" y1="${cy}" x2="${(cx+3).toFixed(2)}" y2="${cy}"
-        stroke="#546e7a" stroke-width="0.3"/>
-  <line x1="${cx}" y1="${(cy-3).toFixed(2)}" x2="${cx}" y2="${(cy+3).toFixed(2)}"
-        stroke="#546e7a" stroke-width="0.3"/>
-  <circle cx="${cx}" cy="${cy}" r="0.6" fill="#546e7a"/>
+  <line x1="${f3(cx)}" y1="${f3(cy)}" x2="${f3(cx)}" y2="${f3(cy - outerExtent - 10)}" stroke="#ef5350" stroke-width="0.3" stroke-dasharray="2,1.5"/>
+  <text x="${f3(cx)}" y="${f3(cy - outerExtent - 12)}" text-anchor="middle" dominant-baseline="auto" font-family="Arial,sans-serif" font-size="3" fill="#ef5350">START</text>
 
   <!-- Cam profile -->
-  <path d="${pathD}"
-        fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>
+  <path d="${camPathD}" fill="none" stroke="#000000" stroke-width="0.5" stroke-linejoin="round"/>
 
+${outerSVG}
+${holeSVG}
+${centreSVG}
 ${nodesSVG}
 </svg>`;
 
@@ -1139,6 +1396,44 @@ document.addEventListener('DOMContentLoaded', () => {
       nd.mm = clamp(nd.mm, 0, val);
     });
     renderAll();
+  });
+
+  // ── Central hole ──────────────────────────────────────
+  document.getElementById('input-hole-dia').addEventListener('input', e => {
+    const v = e.target.value.trim();
+    state.holeDiameter = v === '' ? null : Math.max(0, parseFloat(v) || 0);
+    draw();
+  });
+  document.getElementById('input-hole-dia').addEventListener('change', e => {
+    const v = e.target.value.trim();
+    state.holeDiameter = v === '' ? null : Math.max(0, parseFloat(v) || 0);
+    if (state.holeDiameter !== null) e.target.value = state.holeDiameter;
+    draw();
+  });
+
+  document.getElementById('btn-hole-shape').addEventListener('click', () => {
+    const idx = HOLE_SHAPES.indexOf(state.holeShape);
+    state.holeShape = HOLE_SHAPES[(idx + 1) % HOLE_SHAPES.length];
+    document.getElementById('btn-hole-shape').textContent = HOLE_ICONS[state.holeShape];
+    draw();
+  });
+
+  // ── Channel & outer piece ─────────────────────────────
+  document.getElementById('input-channel-width').addEventListener('change', e => {
+    state.channelWidth = Math.max(0, parseFloat(e.target.value) || 0);
+    e.target.value = state.channelWidth;
+    draw();
+  });
+
+  document.getElementById('input-outer-width').addEventListener('change', e => {
+    state.outerWidth = Math.max(0, parseFloat(e.target.value) || 0);
+    e.target.value = state.outerWidth;
+    draw();
+  });
+
+  document.getElementById('chk-outer-circle').addEventListener('change', e => {
+    state.outerCircle = e.target.checked;
+    draw();
   });
 
   document.getElementById('btn-add-node').addEventListener('click', addNode);
